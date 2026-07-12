@@ -19,6 +19,10 @@ using C programming.
 ## Files
 
 - network_simulation.c
+- Easy1.c
+- Easy2.c
+- Medium1.c
+- Medium2.c
 
 
 ## Result
