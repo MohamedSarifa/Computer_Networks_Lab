@@ -8,8 +8,8 @@
 
 int main() {
     int sockfd;
-    struct sockaddr_in server_addr;
-    socklen_t addr_len = sizeof(server_addr);
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
     CalcRequest request;
     CalcResponse response;
 
@@ -23,57 +23,64 @@ int main() {
     // 2. Configure server address layout
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(PORT);
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Target localhost
+
+    // 3. Bind socket to port
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[+] UDP Calculator Server running on port %d...\n", PORT);
 
     while (1) {
-        printf("\n========== UDP CALCULATOR ==========");
-        printf("\nEnter operation (+, -, *, /) or 'q' to exit: ");
-        scanf(" %c", &request.op);
-
-        if (request.op == 'q' || request.op == 'Q') {
-            printf("[+] Exiting calculation environment. Goodbye!\n");
-            break;
-        }
-
-        // Simple runtime validation of operator inputs
-        if (request.op != '+' && request.op != '-' && request.op != '*' && request.op != '/') {
-            printf("[!] Invalid operator selected. Please use +, -, *, or /.\n");
+        // 4. Await incoming request from a client
+        int bytes_received = recvfrom(sockfd, &request, sizeof(CalcRequest), 0,
+                                      (struct sockaddr *)&client_addr, &addr_len);
+        if (bytes_received < 0) {
+            perror("Receive failed");
             continue;
         }
 
-        printf("Enter first operand: ");
-        if (scanf("%lf", &request.num1) != 1) {
-            printf("[!] Error: Numerical input required.\n");
-            while (getchar() != '\n'); // flush invalid input buffer
-            continue;
+        printf("[+] Received: %g %c %g from %s:%d\n", 
+               request.num1, request.op, request.num2,
+               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+        // 5. Initialize response attributes
+        response.status = 0;
+        response.result = 0.0;
+        memset(response.error_msg, 0, sizeof(response.error_msg));
+
+        // 6. Perform calculation and validate bounds
+        switch (request.op) {
+            case '+':
+                response.result = request.num1 + request.num2;
+                break;
+            case '-':
+                response.result = request.num1 - request.num2;
+                break;
+            case '*':
+                response.result = request.num1 * request.num2;
+                break;
+            case '/':
+                if (request.num2 == 0.0) {
+                    response.status = -1;
+                    strcpy(response.error_msg, "Math Error: Division by Zero");
+                } else {
+                    response.result = request.num1 / request.num2;
+                }
+                break;
+            default:
+                response.status = -1;
+                strcpy(response.error_msg, "System Error: Invalid Operator");
+                break;
         }
 
-        printf("Enter second operand: ");
-        if (scanf("%lf", &request.num2) != 1) {
-            printf("[!] Error: Numerical input required.\n");
-            while (getchar() != '\n'); 
-            continue;
-        }
-
-        // 3. Dispatch structured packet to the Server
-        sendto(sockfd, &request, sizeof(CalcRequest), 0, 
-               (struct sockaddr *)&server_addr, addr_len);
-
-        // 4. Collect computation payload back from Server
-        int bytes_received = recvfrom(sockfd, &response, sizeof(CalcResponse), 0, 
-                                      (struct sockaddr *)&server_addr, &addr_len);
-
-        if (bytes_received > 0) {
-            // 5. Parse execution success metrics
-            if (response.status == 0) {
-                printf("[=] Server Response Result: %g\n", response.result);
-            } else {
-                printf("[X] Server Returned Error: %s\n", response.error_msg);
-            }
-        } else {
-            printf("[X] Connection error: No response received from server.\n");
-        }
+        // 7. Transmit computation status back to the client
+        sendto(sockfd, &response, sizeof(CalcResponse), 0,
+               (struct sockaddr *)&client_addr, addr_len);
     }
 
     close(sockfd);
